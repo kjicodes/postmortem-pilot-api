@@ -3,7 +3,7 @@ from django.db import models
 from django.contrib.postgres.fields import ArrayField
 from pgvector.django import VectorField
 
-# Create your models here.
+
 class Incident(models.Model):
 
     class Severity(models.TextChoices):
