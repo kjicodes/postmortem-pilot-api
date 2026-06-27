@@ -33,3 +33,6 @@ celerybeat.pid
 
 # AWS
 *.pem
+
+# Claude
+CLAUDE.md
