@@ -1,4 +1,4 @@
-from langchain_openai import ChatOpenAI
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
 from pydantic import BaseModel, Field
@@ -23,57 +23,37 @@ def process_incident(self, uuid):
     except Incident.DoesNotExist:
         return
 
-    print(incident.raw_input)
+    print(f"Raw input: {incident.raw_input}")
 
-    #LangChain LLM - define model to use and initialize chat
+    #LangChain LLM - define model to use, initialize chat, and initialize embeddings
     llm_model = "gpt-4o-mini"
     chat = ChatOpenAI(temperature=0.0, model=llm_model)
+    embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
 
     try:
-        #set instructions for llm to format output into json
+        #set instructions for llm to format output into json using IncidentReport class
         output_parser = PydanticOutputParser(pydantic_object=IncidentReport)
         format_instructions = output_parser.get_format_instructions()
-
-        #prompt
-        prompt = """You are an experienced software engineer supporting a technology product, with an understanding \
-                of solving incidents. Imagine that you are drafting an incident report for an error. 
-                Using the following stack trace or error log provided below, \
-                generate a structured incident post-mortem report.
+        prompt = """You are an experienced software engineer supporting a technology product, with an understanding of solving incidents. 
+            Imagine that you are drafting an incident report for an error. 
+            Using the following stack trace or error log provided below, generate a structured incident post-mortem report.
                 
-                Format the output as a JSON with the following keys:
-                title
-                description
-                root_cause
-                affected_systems
-                severity
-                timeline
-                suggested_fixes
-                prevention
-                
-                Stack trace or error log: {text}
-                {format_instructions}
-                """
+            Stack trace or error log: {text}
+            {format_instructions}
+            """
 
         # Initialize prompt template using prompt created
         prompt_template = ChatPromptTemplate.from_template(prompt)
         messages = prompt_template.format_messages(text=incident.raw_input, format_instructions=format_instructions)
+        #prints full prompt - test
+        # print(messages[0].content)
 
-        #full prompt
-        print(messages[0].content)
-
-        #get response and print content
-        #used to be chat(messages)
         response = chat.invoke(messages)
-        print(response.content)
+        # print(response.content)
 
         #dictionary response
         output_dict = output_parser.parse(response.content)
-        print(output_dict)
 
-        #test dict
-        print(output_dict.title)
-
-        #save data to db
         incident.title = output_dict.title
         incident.description = output_dict.description
         incident.root_cause = output_dict.root_cause
@@ -82,9 +62,14 @@ def process_incident(self, uuid):
         incident.timeline = output_dict.timeline
         incident.suggested_fixes = output_dict.suggested_fixes
         incident.prevention = output_dict.prevention
+
+        # create embeddings for the raw input to allow for vector similarity search
+        # allows user to query for similar incidents
+        vector = embeddings.embed_query(incident.raw_input)
+        incident.vector = vector
         incident.status = Incident.Status.COMPLETED
         incident.save(update_fields=["title", "description", "root_cause", "affected_systems",
-                                     "severity", "timeline", "suggested_fixes", "prevention", "status"
+                                     "severity", "timeline", "suggested_fixes", "prevention", "status", "vector",
                                      ])
     except Exception as e:
         incident.status = Incident.Status.FAILED
