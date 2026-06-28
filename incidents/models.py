@@ -20,7 +20,7 @@ class Incident(models.Model):
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     vector = VectorField(dimensions=1536, null=True, blank=True)
     raw_input = models.TextField(blank=True)
-    title = models.CharField(max_length=100)
+    title = models.CharField(max_length=100, blank=True)
     description = models.TextField(blank=True)
     root_cause = models.TextField(blank=True)
     affected_systems = ArrayField(models.CharField(max_length=50), size=10, blank=True, default=list)
