@@ -1,14 +1,18 @@
-from rest_framework.viewsets import ModelViewSet
+from rest_framework.viewsets import ModelViewSet, ReadOnlyModelViewSet
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from django.conf import settings
-from incidents.serializers import IncidentSerializer, DocumentSerializer
+from django.utils import timezone
+from datetime import timedelta
+from incidents.serializers import IncidentSerializer, DocumentSerializer, PatternReportSerializer
 from rest_framework.status import HTTP_400_BAD_REQUEST, HTTP_200_OK, HTTP_201_CREATED, HTTP_202_ACCEPTED, HTTP_404_NOT_FOUND, HTTP_503_SERVICE_UNAVAILABLE
-from incidents.models import Incident, Document
-from incidents.tasks import process_incident, process_document
+from incidents.models import Incident, Document, PatternReport
+from incidents.tasks import process_incident, process_document, generate_pattern_report
 from pgvector.django import CosineDistance
 import boto3
 import uuid as uuidlib
+
+PATTERN_REPORT_TTL = timedelta(hours=1)
 
 
 class IncidentViewSet(ModelViewSet):
@@ -103,8 +107,26 @@ class DocumentViewSet(ModelViewSet):
         else:
             return Response(serializer.errors, status=HTTP_400_BAD_REQUEST)
 
+class PatternReportViewSet(ReadOnlyModelViewSet):
+    queryset = PatternReport.objects.all()
+    serializer_class = PatternReportSerializer
 
+    def list(self, request):
+        #only 1 report will exist in the db at a time
+        latest_report = PatternReport.objects.order_by('-generated_at').first()
+        current_time = timezone.now()
 
+        #IF the report was generated within the hour, it is fresh - return it
+        if latest_report and latest_report.generated_at >= current_time - PATTERN_REPORT_TTL:
+            serializer = PatternReportSerializer(latest_report)
+            print(f"Latest report returned. {current_time}")
+            return Response(serializer.data, status=HTTP_200_OK)
 
-
-
+        #IF the report is stale (time delta > 1hr), generate a fresh one
+        generate_pattern_report.delay()
+        response = {
+            "message": "Generating new pattern report.",
+            "old_report_last_generated_at": latest_report.generated_at,
+            "current_time": current_time
+        }
+        return Response(response, status=HTTP_202_ACCEPTED)
