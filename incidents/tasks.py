@@ -1,10 +1,16 @@
+from django.conf import settings
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
 from pydantic import BaseModel, Field
 from typing import List
 from celery import shared_task
-from incidents.models import Incident
+from incidents.models import Incident, Document
+import boto3
+import io
+import pdfplumber
+from docx import Document as DocxDocument
+
 
 class IncidentReport(BaseModel):
     title: str = Field(description="A short, descriptive summary. Keep it under 10 words.")
@@ -74,6 +80,64 @@ def process_incident(self, uuid):
     except Exception as e:
         incident.status = Incident.Status.FAILED
         incident.save(update_fields=["status"])
+
+
+@shared_task(bind=True)
+def process_document(self, uuid):
+    try:
+        document = Document.objects.get(uuid=uuid)
+    except Document.DoesNotExist:
+        return
+
+    embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+
+    try:
+        s3_client = boto3.client(
+            's3',
+            aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+            region_name=settings.AWS_REGION
+        )
+        response = s3_client.get_object(Bucket=settings.AWS_BUCKET_NAME, Key=document.s3_key)
+        file_content = response['Body'].read()
+
+        print("After getting document from s3 bucket")
+        if document.file_type == Document.FileType.PDF:
+            with pdfplumber.open(io.BytesIO(file_content)) as pdf:
+                extracted_text = ""
+                for page in pdf.pages:
+                    extracted_text += page.extract_text() or ""
+            print("After extracting text from pdf")
+            document.extracted_text = extracted_text
+        elif document.file_type == Document.FileType.DOCX:
+            docx = DocxDocument(io.BytesIO(file_content))
+            extracted_text = ""
+            for paragraph in docx.paragraphs:
+                extracted_text += paragraph.text + "\n"
+            print("After extracting text from docx")
+        else:
+            raise ValueError(f"Unsupported file type: {document.file_type}")
+
+        #generate embeddings from extracted text
+        vector = embeddings.embed_query(extracted_text)
+
+        #save values to db
+        document.extracted_text = extracted_text
+        document.vector = vector
+        document.status = Document.Status.COMPLETED
+        document.save(update_fields=["extracted_text", "vector", "status"])
+        print("Document saved")
+    except Exception as e:
+        document.status = Document.Status.FAILED
+        document.save(update_fields=["status"])
+        print(f"Document failed: {type(e).__name__}: {e}")
+
+
+
+
+
+
+
 
 
 

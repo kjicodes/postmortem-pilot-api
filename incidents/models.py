@@ -5,7 +5,6 @@ from pgvector.django import VectorField
 
 
 class Incident(models.Model):
-
     class Severity(models.TextChoices):
         NORMAL = "NORMAL", "Normal"
         CRITICAL = "CRITICAL", "Critical"
@@ -33,7 +32,6 @@ class Incident(models.Model):
 
 
 class Document(models.Model):
-
     class FileType(models.TextChoices):
         PDF = "PDF", "PDF"
         DOCX = "DOCX", "DOCX"
@@ -44,8 +42,8 @@ class Document(models.Model):
         FAILED = "FAILED", "Failed"
 
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
-    filename = models.CharField(max_length=255)
-    file_type = models.CharField(max_length=4, choices=FileType.choices)
+    filename = models.CharField(max_length=255, blank=True)
+    file_type = models.CharField(max_length=4, choices=FileType.choices, blank=True)
     s3_key = models.CharField(max_length=500)           #s3 object path
     extracted_text = models.TextField(blank=True)       #raw text after parsing - can reprocess if needed incase of parsing failures
     vector = VectorField(dimensions=1536, null=True, blank=True)
