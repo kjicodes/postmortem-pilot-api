@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from incidents.models import Incident, Document
+from incidents.models import Incident, Document, PatternReport
 
 class IncidentSerializer(serializers.ModelSerializer):
     class Meta:
@@ -17,4 +17,8 @@ class DocumentSerializer(serializers.ModelSerializer):
         validated_data.pop('file', None)
         return super().create(validated_data)
 
+class PatternReportSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PatternReport
+        fields = ['report', 'generated_at']
 

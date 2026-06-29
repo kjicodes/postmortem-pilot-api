@@ -1,16 +1,19 @@
 from django.conf import settings
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import PydanticOutputParser
+from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
+from langchain_core.output_parsers import PydanticOutputParser, StrOutputParser
 from pydantic import BaseModel, Field
 from typing import List
 from celery import shared_task
-from incidents.models import Incident, Document
+from incidents.models import Incident, Document, PatternReport
 import boto3
 import io
 import pdfplumber
 from docx import Document as DocxDocument
+import numpy as np
+from sklearn.cluster import KMeans
 
+LLM_MODEL = "gpt-4o-mini"
 
 class IncidentReport(BaseModel):
     title: str = Field(description="A short, descriptive summary. Keep it under 10 words.")
@@ -31,9 +34,8 @@ def process_incident(self, uuid):
 
     print(f"Raw input: {incident.raw_input}")
 
-    #LangChain LLM - define model to use, initialize chat, and initialize embeddings
-    llm_model = "gpt-4o-mini"
-    chat = ChatOpenAI(temperature=0.0, model=llm_model)
+    #LangChain LLM - initialize chat, and initialize embeddings
+    chat = ChatOpenAI(temperature=0.0, model=LLM_MODEL)
     embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
 
     try:
@@ -131,6 +133,121 @@ def process_document(self, uuid):
         document.status = Document.Status.FAILED
         document.save(update_fields=["status"])
         print(f"Document failed: {type(e).__name__}: {e}")
+
+
+@shared_task(bind=True)
+def generate_pattern_report(self):
+    incidents = list(Incident.objects.filter(vector__isnull=False, status=Incident.Status.COMPLETED))
+
+
+    #----RUN KMEANS----
+    #N incidents - for KMeans clusters
+    #number of clusters scale sensibly
+    count = len(incidents)
+    print(count)
+
+    if count < 3:
+        return
+    elif count < 20:
+        n = 3
+    elif count < 100:
+        n = 5
+    else:
+        n = 10
+
+    try:
+        #extract vectors into a numpy array - needed as input for KMeans
+        vectors = np.array([incident.vector for incident in incidents])
+        print(vectors)
+
+        #run KMeans
+        kmeans = KMeans(n_clusters=n, random_state=42)
+        kmeans.fit(vectors)
+        labels = kmeans.labels_
+        print(labels)
+
+        #group incidents by cluster
+        clusters = {}
+        for i, label in enumerate(labels):
+            if label not in clusters:
+                clusters[label] = []
+            clusters[label].append(incidents[i])    #each object key is a cluster number, which has a list of incidents as the value
+        print(clusters)
+
+        #----RUN LLM----
+        #use LLM to summarize in 2 parts:
+        #first summarize each cluster of incidents..
+        #then summarize those summaries
+        chat = ChatOpenAI(temperature=0.0, model=LLM_MODEL)
+        prompt_one = """You are an experienced software engineer analyzing a group of related incidents.
+            Below is a list of incident titles and descriptions that have been grouped together by similarity.
+            Summarize the recurring pattern you see in 2-3 sentences. Be specific about what is failing and why.
+            
+            Incidents: {cluster_text}
+            Pattern summary: 
+            """
+        prompt_two = """You are an experienced software engineer analyzing incident patterns across a system.
+        Below are summaries of recurring incident patterns identified from the incident history.
+        Synthesize these into a final pattern report that highlights the most critical trends, 
+        recurring root causes, and recommended areas of focus. Be concise and actionable.
+        Keep the final report under 300 words. Focus on the 2-3 most critical patterns only.
+        
+        Cluster summaries: {cluster_summaries}
+        Final pattern report:
+        """
+
+        cluster_prompt = ChatPromptTemplate.from_template(prompt_one)
+        synthesis_prompt = ChatPromptTemplate.from_template(prompt_two)
+
+        cluster_chain = cluster_prompt | chat | StrOutputParser()
+        synthesis_chain = synthesis_prompt | chat | StrOutputParser()
+
+        #each entry in the list is a summary of a cluster (group of related incidents)
+        cluster_summaries_list = []
+        for label, cluster_incidents in clusters.items():
+            incident_lines = []
+            for incident in cluster_incidents:
+                line = f"- {incident.title}: {incident.description}"
+                incident_lines.append(line)
+
+            #join incidents together to be summarized by llm then add to the list - repeat
+            cluster_text = "\n".join(incident_lines)
+            summary = cluster_chain.invoke({"cluster_text": cluster_text})
+            cluster_summaries_list.append(summary)
+
+            print(f"Incident lines summarized by llm: {incident_lines}")
+        print(f"Cluster summaries list from llm: {cluster_summaries_list}")
+
+        cluster_summaries = "\n\n".join(cluster_summaries_list)
+        print(cluster_summaries)
+        final_report = synthesis_chain.invoke({ "cluster_summaries": cluster_summaries })
+
+        #build the cluster data for the response obj - provide context for the generated pattern report for anyone reading it
+        cluster_data = []
+        for i, (label, cluster_incidents) in enumerate(clusters.items()):
+            data = {
+                "cluster": i + 1,
+                "incidents": [{"uuid": str(incident.uuid), "title": incident.title} for incident in cluster_incidents],
+                "summary": cluster_summaries_list[i]
+            }
+            print(data)
+            cluster_data.append(data)
+
+        pattern_report = { "summary": final_report, "clusters": cluster_data }
+        PatternReport.objects.create(report=pattern_report)
+    except Exception as e:
+        print(f"Pattern report generation failed: {type(e).__name__}: {e}")
+
+
+
+
+
+
+
+
+
+
+
 
 
 
