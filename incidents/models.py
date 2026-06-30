@@ -18,7 +18,7 @@ class Incident(models.Model):
 
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     vector = VectorField(dimensions=1536, null=True, blank=True)
-    raw_input = models.TextField(blank=True)
+    raw_input = models.TextField(blank=False)
     title = models.CharField(max_length=100, blank=True)
     description = models.TextField(blank=True)
     root_cause = models.TextField(blank=True)
