@@ -1,6 +1,6 @@
 # The Post-Mortem Pilot
 
-An internal engineering tool that turns incident reports into organizational memory. Engineers paste a stack trace or error log and the app generates a structured post-mortem report, searches past incidents for similar patterns using vector similarity, and surfaces cross-incident trends over time.
+An internal engineering tool that turns incident reports into organizational memory. Engineers paste a stack trace or error log to search for similar past incidents during triage, or submit it to generate a structured post-mortem report after resolution. Over time the app surfaces cross-incident trends using vector similarity and LLM-powered pattern detection.
 
 ## The Problem
 
@@ -12,12 +12,13 @@ Post-mortems get written and never read again. Teams repeat the same incidents b
 - **Database:** PostgreSQL + pgvector
 - **LLM / Embeddings:** OpenAI via LangChain
 - **Async Processing:** Celery + Redis
-- **File Storage:** AWS S3
+- **Cloud:** AWS S3 (document storage), IAM
+- **Testing:** pytest, Postman
 
 ## Features
 
-- Submit a stack trace or error log -> LLM generates a structured post-mortem report asynchronously
-- Vector similarity search surfaces past incidents with similar patterns
+- Search for similar past incidents by pasting a stack trace, error log, or uploading a document 
+- Submit a stack trace or error log to generate a structured post-mortem report asynchronously via LLM
 - Upload existing post-mortem documents (PDF or DOCX) to seed the knowledge base with historical data
 - Cross-incident pattern detection using KMeans clustering and LLM summarization
 - REST API backend designed to be embedded into existing systems for richer, context-aware reports
@@ -90,28 +91,15 @@ celery -A config worker --loglevel=info
 
 ### Incidents
 
-| Method   | Endpoint | Description |
-|----------|----------|-------------|
-| `POST`   | `/api/incidents/` | Submit a stack trace or error log — LLM generates a structured report asynchronously |
-| `GET`    | `/api/incidents/` | List all incident reports |
-| `GET`    | `/api/incidents/<uuid>/` | Retrieve a specific incident report |
-| `PATCH`  | `/api/incidents/<uuid>/` | Edit a generated report |
-| `DELETE` | `/api/incidents/<uuid>/` | Remove an incident |
-| `GET`    | `/api/incidents/<uuid>/similar/` | Find past incidents with similar patterns via vector similarity search |
-
-#### POST /api/incidents/ — Request Body
-
-```json
-{
-  "raw_input": "Traceback (most recent call last):\n  File \"app.py\"..."
-}
-```
-
-#### Response
-
-Returns the created incident immediately with `status: PENDING`. The LLM processes the report asynchronously. Poll `GET /api/incidents/<uuid>/` until `status` is `COMPLETED`.
-
----
+| Method   | Endpoint | Description                                                                                                                   |
+|----------|----------|-------------------------------------------------------------------------------------------------------------------------------|
+| `POST`   | `/api/incidents/` | Submit a stack trace or error log, then LLM generates a structured report, saves it, and returns it                           |
+| `POST`   | `/api/incidents/search/` | Submit raw text or a document file, then runs vector similarity search and returns matching past incidents. |
+| `GET`    | `/api/incidents/` | List all incident reports                                                                                                     |
+| `GET`    | `/api/incidents/<uuid>/` | Retrieve a specific incident report                                                                                           |
+| `PATCH`  | `/api/incidents/<uuid>/` | Edit a generated report                                                                                                       |
+| `DELETE` | `/api/incidents/<uuid>/` | Remove an incident                                                                                                            |
+| `GET`    | `/api/incidents/<uuid>/similar/` | Find incidents similar to a specific documented one         |
 
 ### Documents
 
@@ -121,29 +109,35 @@ Returns the created incident immediately with `status: PENDING`. The LLM process
 | `GET` | `/api/documents/` | List uploaded documents |
 | `DELETE` | `/api/documents/<uuid>/` | Remove a document |
 
-#### POST /api/documents/ — Request
-
-Send as `multipart/form-data` with a `file` field containing the PDF or DOCX.
-
-#### Response
-
-Returns the created document with `status: PENDING`. Text extraction and embedding generation happen asynchronously. Poll `GET /api/documents/<uuid>/` until `status` is `COMPLETED`.
-
----
-
 ### Patterns
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/api/patterns/` | Surface cross-incident trends using KMeans clustering and LLM summarization |
 
-#### How it works
+---
 
-1. All incident embeddings are pulled from PostgreSQL
-2. KMeans (scikit-learn) clusters them by semantic similarity — N scales dynamically with incident count (3 / 5 / 10 for small / medium / large datasets)
-3. Each cluster is summarized by the LLM via LangChain
-4. Cluster summaries are synthesized into a final pattern report
-5. Results are cached in the database — recomputed when stale (default threshold: 1 hour)
+## Examples
+
+**Submit a new incident**
+```json
+POST /api/incidents/
+{
+  "raw_input": "Traceback (most recent call last):\n  File \"app.py\"..."
+}
+```
+Returns the incident with `status: PENDING`. Poll `GET /api/incidents/<uuid>/` until `status` is `COMPLETED`.
+
+---
+
+**Search for similar incidents**
+```json
+POST /api/incidents/search/
+{
+  "query": "Traceback (most recent call last):\n  File \"app.py\"..."
+}
+```
+Returns a list of past incidents ranked by vector similarity.
 
 ---
 
@@ -163,5 +157,5 @@ The same pattern applies to document processing.
 
 ## Roadmap
 
-- [ ] **Cross-table vector similarity search** — extend `GET /incidents/<uuid>/similar/` to query both the `Incident` and `Document` tables, returning similar results from both. Currently only incidents are searched; documents have embeddings stored but are not yet included in similarity queries.
-- [ ] **Frontend** — React + TypeScript interface with a home page presenting the app as a product, and an incident submission form
+- [ ] Complete testing
+- [ ] Work on frontend (using React)
