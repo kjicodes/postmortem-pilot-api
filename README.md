@@ -13,6 +13,7 @@ Post-mortems get written and never read again. Teams repeat the same incidents b
 - **LLM / Embeddings:** OpenAI via LangChain
 - **Async Processing:** Celery + Redis
 - **Cloud:** AWS S3 (document storage), IAM
+- **Containerization:** Docker
 - **Testing:** pytest, Postman
 
 ## Features
@@ -86,6 +87,22 @@ python manage.py runserver
 # Terminal 2 — Celery worker
 celery -A config worker --loglevel=info
 ```
+
+### Running with Docker
+
+Ensure Docker Desktop is running, then:
+
+```bash
+docker-compose up --build
+```
+
+The app will be available at `http://localhost:8000`. On first run, apply migrations:
+
+```bash
+docker-compose exec web python manage.py migrate
+```
+
+---
 
 ## API Endpoints
 
