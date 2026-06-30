@@ -115,8 +115,6 @@ celery -A config worker --loglevel=info
 |--------|----------|-------------|
 | `GET` | `/api/patterns/` | Surface cross-incident trends using KMeans clustering and LLM summarization |
 
----
-
 ## Examples
 
 **Submit a new incident**
@@ -128,8 +126,6 @@ POST /api/incidents/
 ```
 Returns the incident with `status: PENDING`. Poll `GET /api/incidents/<uuid>/` until `status` is `COMPLETED`.
 
----
-
 **Search for similar incidents**
 ```json
 POST /api/incidents/search/
@@ -138,8 +134,6 @@ POST /api/incidents/search/
 }
 ```
 Returns a list of past incidents ranked by vector similarity.
-
----
 
 ## Async Processing
 
@@ -152,8 +146,6 @@ POST /incidents → Save with PENDING status → Return 202 ACCEPTED
 ```
 
 The same pattern applies to document processing.
-
----
 
 ## Roadmap
 
