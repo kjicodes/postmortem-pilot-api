@@ -5,6 +5,7 @@ from django.conf import settings
 from django.utils import timezone
 from datetime import timedelta
 from incidents.serializers import IncidentSerializer, DocumentSerializer, PatternReportSerializer
+from incidents.utils import generate_embedding, extract_document_text
 from rest_framework.status import HTTP_400_BAD_REQUEST, HTTP_200_OK, HTTP_201_CREATED, HTTP_202_ACCEPTED, HTTP_404_NOT_FOUND, HTTP_503_SERVICE_UNAVAILABLE
 from incidents.models import Incident, Document, PatternReport
 from incidents.tasks import process_incident, process_document, generate_pattern_report
@@ -19,29 +20,6 @@ class IncidentViewSet(ModelViewSet):
     queryset = Incident.objects.all()
     serializer_class = IncidentSerializer
     lookup_field = 'uuid'
-
-    @action(detail=True, methods=["get"], url_path="similar")
-    def get_similar_incidents(self, request, uuid=None):
-        try:
-            incident = Incident.objects.get(uuid=uuid)
-        except Incident.DoesNotExist:
-            return Response({"message": "Incident not found."}, status=HTTP_404_NOT_FOUND)
-
-        if incident.vector is None:
-            return Response({"message": "Similarity search is unavailable - incident is still processing or failed."},
-                            status=HTTP_400_BAD_REQUEST)
-
-        similar_incidents = (
-            Incident.objects
-            .exclude(uuid=uuid)  # exclude the incident used in the search query
-            .filter(vector__isnull=False)  # only consider incidents fully processed (vector != null)
-            .annotate(distance=CosineDistance("vector",
-                                              incident.vector))  # computes distance between each incident's vector and the current one
-            .order_by("distance")[:5]  # return the 5 closest matches
-        )
-
-        serializer = IncidentSerializer(similar_incidents, many=True)
-        return Response(serializer.data, status=HTTP_200_OK)
 
     def create(self, request, *args, **kwargs):
         serializer = IncidentSerializer(data=request.data)
@@ -60,6 +38,57 @@ class IncidentViewSet(ModelViewSet):
     def destroy(self, request, *args, **kwargs):
         super().destroy(request, *args, **kwargs)
         return Response({ "message": "Incident successfully deleted."}, status=HTTP_200_OK)
+
+    def _find_similar_incidents(self, vector, uuid_to_exclude=None):
+        #search for similar incidents by vector
+        #IF a uuid is present, then search req is an incident report from the db - therefore exclude that incident in the response
+        #IF uuid is not present, then search req is a stack trace/error with no existing incident report
+        incidents = Incident.objects.filter(vector__isnull=False)
+        if uuid_to_exclude:
+            incidents = incidents.exclude(uuid=uuid_to_exclude)
+        result = incidents.annotate(distance=CosineDistance("vector", vector)).order_by("distance")[:5]
+        return result
+
+    @action(detail=False, methods=["post"], url_path="search")
+    def search(self, request):
+        raw_text = request.data.get("raw_text")
+        file = request.FILES.get("file")
+
+        if not raw_text and not file:
+            return Response({"message": "Provide either text or a file."}, status=HTTP_400_BAD_REQUEST)
+
+        if file:
+            file_type = file.name.split(".")[-1]
+            file_content = file.read()
+
+            try:
+                raw_text = extract_document_text(file_type, file_content)
+            except ValueError:
+                return Response({"message": "Failed to extract text from file."}, status=HTTP_400_BAD_REQUEST)
+
+        try:
+            vector = generate_embedding(raw_text)
+        except Exception:
+            return Response({"message": "Failed to generate embedding."}, status=HTTP_503_SERVICE_UNAVAILABLE)
+
+        incidents = self._find_similar_incidents(vector)
+        serializer = IncidentSerializer(incidents, many=True)
+        return Response(serializer.data, status=HTTP_200_OK)
+
+    @action(detail=True, methods=["get"], url_path="similar")
+    def get_similar_incidents(self, request, uuid=None):
+        try:
+            incident = Incident.objects.get(uuid=uuid)
+        except Incident.DoesNotExist:
+            return Response({"message": "Incident not found."}, status=HTTP_404_NOT_FOUND)
+
+        if incident.vector is None:
+            return Response({"message": "Similarity search is unavailable - incident is still processing or failed."},
+                            status=HTTP_400_BAD_REQUEST)
+
+        similar_incidents = self._find_similar_incidents(incident.vector, uuid)
+        serializer = IncidentSerializer(similar_incidents, many=True)
+        return Response(serializer.data, status=HTTP_200_OK)
 
 
 class DocumentViewSet(ModelViewSet):

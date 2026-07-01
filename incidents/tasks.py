@@ -6,10 +6,8 @@ from pydantic import BaseModel, Field
 from typing import List
 from celery import shared_task
 from incidents.models import Incident, Document, PatternReport
+from incidents.utils import generate_embedding, extract_document_text
 import boto3
-import io
-import pdfplumber
-from docx import Document as DocxDocument
 import numpy as np
 from sklearn.cluster import KMeans
 
@@ -34,9 +32,8 @@ def process_incident(self, uuid):
 
     print(f"Raw input: {incident.raw_input}")
 
-    #LangChain LLM - initialize chat, and initialize embeddings
+    #LangChain LLM - initialize chat
     chat = ChatOpenAI(temperature=0.0, model=LLM_MODEL)
-    embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
 
     try:
         #set instructions for llm to format output into json using IncidentReport class
@@ -73,7 +70,7 @@ def process_incident(self, uuid):
 
         # create embeddings for the raw input to allow for vector similarity search
         # allows user to query for similar incidents
-        vector = embeddings.embed_query(incident.raw_input)
+        vector = generate_embedding(incident.raw_input)
         incident.vector = vector
         incident.status = Incident.Status.COMPLETED
         incident.save(update_fields=["title", "description", "root_cause", "affected_systems",
@@ -91,8 +88,6 @@ def process_document(self, uuid):
     except Document.DoesNotExist:
         return
 
-    embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-
     try:
         s3_client = boto3.client(
             's3',
@@ -103,25 +98,9 @@ def process_document(self, uuid):
         response = s3_client.get_object(Bucket=settings.AWS_BUCKET_NAME, Key=document.s3_key)
         file_content = response['Body'].read()
 
-        print("After getting document from s3 bucket")
-        if document.file_type == Document.FileType.PDF:
-            with pdfplumber.open(io.BytesIO(file_content)) as pdf:
-                extracted_text = ""
-                for page in pdf.pages:
-                    extracted_text += page.extract_text() or ""
-            print("After extracting text from pdf")
-            document.extracted_text = extracted_text
-        elif document.file_type == Document.FileType.DOCX:
-            docx = DocxDocument(io.BytesIO(file_content))
-            extracted_text = ""
-            for paragraph in docx.paragraphs:
-                extracted_text += paragraph.text + "\n"
-            print("After extracting text from docx")
-        else:
-            raise ValueError(f"Unsupported file type: {document.file_type}")
-
+        extracted_text = extract_document_text(document.file_type, file_content)
         #generate embeddings from extracted text
-        vector = embeddings.embed_query(extracted_text)
+        vector = generate_embedding(extracted_text)
 
         #save values to db
         document.extracted_text = extracted_text
