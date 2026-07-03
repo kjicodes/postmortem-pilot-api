@@ -1,10 +1,10 @@
 # The Post-Mortem Pilot
 
-An internal engineering tool that turns incident reports into organizational memory. Engineers paste a stack trace or error log to search for similar past incidents during triage, or submit it to generate a structured post-mortem report after resolution. Over time the app surfaces cross-incident trends using vector similarity and LLM-powered pattern detection.
+An internal engineering tool that turns incident reports into organizational memory. When an engineer hits an error, they can paste a stack trace or error log to surface similar past incidents, giving them useful context and a starting point rather than debugging blind. After resolution, they submit the incident to get a structured post-mortem draft to build on, filling in what actually happened, what they tried, and what fixed it. Over time, the knowledge base surfaces recurring patterns across incidents, giving teams the visibility they need for informed conversations about root causes and longer-term fixes.
 
 ## The Problem
 
-Post-mortems get written and never read again. Teams repeat the same incidents because their history isn't searchable or analyzed. This app turns individual incidents into a knowledge base that gets more valuable over time.
+Post-mortems get written and never read again. Teams lose institutional knowledge after every incident because their history isn't searchable or connected. This app turns individual incidents into a living knowledge base that gets more valuable the more it's used.
 
 ## Tech Stack
 
@@ -18,8 +18,8 @@ Post-mortems get written and never read again. Teams repeat the same incidents b
 
 ## Features
 
-- Search for similar past incidents by pasting a stack trace, error log, or uploading a document 
-- Submit a stack trace or error log to generate a structured post-mortem report asynchronously via LLM
+- Paste a stack trace, error log, or upload a document to surface similar past incidents and gain context during triage 
+- Submit a resolved incident to generate a structured post-mortem draft via LLM, giving engineers a starting point to complete with what actually happened and how it was fixed
 - Upload existing post-mortem documents (PDF or DOCX) to seed the knowledge base with historical data
 - Cross-incident pattern detection using KMeans clustering and LLM summarization
 - REST API backend designed to be embedded into existing systems for richer, context-aware reports
