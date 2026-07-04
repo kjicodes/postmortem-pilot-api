@@ -15,7 +15,6 @@ class Incident(models.Model):
         COMPLETED = "COMPLETED", "Completed"
         FAILED = "FAILED", "Failed"
 
-
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     vector = VectorField(dimensions=1536, null=True, blank=True)
     raw_input = models.TextField(blank=False)
@@ -30,11 +29,14 @@ class Incident(models.Model):
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        ordering = ['-created_at']
+
 
 class Document(models.Model):
     class FileType(models.TextChoices):
-        PDF = "PDF", "PDF"
-        DOCX = "DOCX", "DOCX"
+        PDF = "pdf", "pdf"
+        DOCX = "docx", "docx"
 
     class Status(models.TextChoices):
         PENDING = "PENDING", "Pending"
@@ -49,6 +51,9 @@ class Document(models.Model):
     vector = VectorField(dimensions=1536, null=True, blank=True)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
 
 # cache model
 class PatternReport(models.Model):
