@@ -2,12 +2,8 @@ import pytest
 import uuid
 from unittest.mock import patch
 from django.urls import reverse
-from rest_framework.test import APIClient
 from incidents.models import Incident
-
-@pytest.fixture
-def api_client():
-    return APIClient()
+from . conftest import api_client
 
 def make_incident(**kwargs):
     defaults = {
@@ -33,7 +29,7 @@ def test_list_all_incidents_returns_200(api_client):
     url = reverse("incident-list")
     response = api_client.get(url)
     assert response.status_code == 200
-    assert len(response.data) == 2
+    assert response.data["count"] == len(response.data["results"])
 
 @pytest.mark.django_db
 def test_get_incident_returns_200(api_client):

@@ -207,7 +207,7 @@ def generate_pattern_report(self):
             data = {
                 "cluster": i + 1,
                 "incidents": [{"uuid": str(incident.uuid), "title": incident.title} for incident in cluster_incidents],
-                "summary": cluster_summaries_list[i]
+                "cluster_summary": cluster_summaries_list[i]
             }
             print(data)
             cluster_data.append(data)

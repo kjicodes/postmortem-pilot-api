@@ -102,7 +102,7 @@ class DocumentViewSet(ModelViewSet):
         if serializer.is_valid():
             file = serializer.validated_data['file']
             filename = file.name
-            file_type = filename.split('.')[-1].upper()
+            file_type = filename.split('.')[-1]
             print(filename)
             print(file_type)
 
