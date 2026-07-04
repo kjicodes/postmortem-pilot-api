@@ -13,6 +13,7 @@ class DocumentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Document
         fields = ['uuid', 'filename', 'file_type', 'file', 'status', 'extracted_text', 'created_at']
+        read_only_fields = ['status']
 
     def validate_file(self, value):
         ext = value.name.split('.')[-1]
