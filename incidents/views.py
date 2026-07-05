@@ -21,24 +21,6 @@ class IncidentViewSet(ModelViewSet):
     serializer_class = IncidentSerializer
     lookup_field = 'uuid'
 
-    def create(self, request, *args, **kwargs):
-        serializer = IncidentSerializer(data=request.data)
-
-        if serializer.is_valid():
-            incident = serializer.save()
-            #convert uuid to string first for Celery to serialize to json
-            uuid = str(incident.uuid)
-
-            #send data to llm to process - status should be set to 'pending' for now
-            process_incident.delay(uuid)
-            return Response(serializer.data, status=HTTP_202_ACCEPTED)
-        else:
-            return Response(serializer.errors, status=HTTP_400_BAD_REQUEST)
-
-    def destroy(self, request, *args, **kwargs):
-        super().destroy(request, *args, **kwargs)
-        return Response({ "message": "Incident successfully deleted."}, status=HTTP_200_OK)
-
     def _find_similar_incidents(self, vector, uuid_to_exclude=None):
         #search for similar incidents by vector
         #IF a uuid is present, then search req is an incident report from the db - therefore exclude that incident in the response
@@ -46,8 +28,28 @@ class IncidentViewSet(ModelViewSet):
         incidents = Incident.objects.filter(vector__isnull=False)
         if uuid_to_exclude:
             incidents = incidents.exclude(uuid=uuid_to_exclude)
-        result = incidents.annotate(distance=CosineDistance("vector", vector)).order_by("distance")[:5]
+        result = incidents.annotate(distance=CosineDistance("vector", vector)).order_by("distance")[:3]
         return result
+
+    def create(self, request, *args, **kwargs):
+        serializer = IncidentSerializer(data=request.data)
+
+        if serializer.is_valid():
+            print("Serializer is valid")
+            incident = serializer.save()
+            print("Saved incident and starting to process incident...")
+            uuid = str(incident.uuid)
+
+            process_incident.delay(uuid)
+            print("Incident processed...success or failed")
+            return Response(serializer.data, status=HTTP_202_ACCEPTED)
+        else:
+            print("Serializer is invalid")
+            return Response(serializer.errors, status=HTTP_400_BAD_REQUEST)
+
+    def destroy(self, request, *args, **kwargs):
+        super().destroy(request, *args, **kwargs)
+        return Response({ "message": "Incident successfully deleted."}, status=HTTP_200_OK)
 
     @action(detail=False, methods=["post"], url_path="search")
     def search(self, request):

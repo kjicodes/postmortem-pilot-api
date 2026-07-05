@@ -19,7 +19,18 @@ def make_incident(**kwargs):
 @patch("incidents.views.process_incident.delay")
 def test_create_incident_returns_202(mock_task, api_client):
     url = reverse("incident-list")
-    response = api_client.post(url, {"raw_input": "NullPointerException at line 42"}, format="json")
+    body = {
+        "raw_input": "Error",
+        "title": "test",
+        "description": "test",
+        "severity": "NORMAL",
+        "affected_systems": ["test"],
+        "timeline": "test",
+        "root_cause": "test",
+        "resolution": "test",
+        "prevention": "test",
+    }
+    response = api_client.post(url, body, format="json")
     assert response.status_code == 202
 
 @pytest.mark.django_db

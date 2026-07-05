@@ -4,7 +4,7 @@ from incidents.models import Incident, Document, PatternReport
 class IncidentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Incident
-        fields = ['uuid', 'raw_input', 'title', 'description', 'root_cause', 'affected_systems', 'severity', 'timeline', 'suggested_fixes', 'prevention', 'status', 'created_at']
+        fields = ['uuid', 'raw_input', 'title', 'description', 'severity', 'affected_systems', 'timeline', 'root_cause', 'resolution', 'prevention', 'status', 'created_at']
         read_only_fields = ['status']
 
 class DocumentSerializer(serializers.ModelSerializer):
