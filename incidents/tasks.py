@@ -1,9 +1,9 @@
 from django.conf import settings
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
-from langchain_core.output_parsers import PydanticOutputParser, StrOutputParser
+from langchain_core.output_parsers import StrOutputParser
 from pydantic import BaseModel, Field
-from typing import List
+from typing import List, Optional
 from celery import shared_task
 from incidents.models import Incident, Document, PatternReport
 from incidents.utils import generate_embedding, extract_document_text
@@ -14,14 +14,13 @@ from sklearn.cluster import KMeans
 LLM_MODEL = "gpt-4o-mini"
 
 class IncidentReport(BaseModel):
-    title: str = Field(description="A short, descriptive summary. Keep it under 10 words.")
-    description: str = Field(description="2-3 sentences on what failed and the impact.")
-    root_cause: str = Field(description="2-3 sentences on the underlying cause.")
-    affected_systems: List[str] = Field(description="List of impacted services or components.")
-    severity: str = Field(description="One of: NORMAL, HIGH, CRITICAL.")
-    timeline: str = Field(description="Sequence of events, no more than 5 bullet points.")
-    suggested_fixes: str = Field(description="Steps to resolve the incident, no more than 5 bullet points.")
-    prevention: str = Field(description="Steps to prevent recurrence, no more than 3 bullet points.")
+    title: str = Field(description="Reworded for clarity and concision. Keep under 10 words.")
+    description: str = Field(description="Reworded into 2-3 clear sentences on what failed and the impact.")
+    timeline: str = Field(description="Reworded into a clear sequence of events, no more than 5 bullet points.")
+    affected_systems: List[str] = Field(description="Cleaned up for consistent naming/formatting.")
+    root_cause: str = Field(description="Reworded into 2-3 clear sentences on the underlying cause.")
+    resolution: str = Field(description="Reworded into clear steps, no more than 5 bullet points.")
+    prevention: str = Field(description="Reworded into clear action items, no more than 3 bullet points.")
 
 @shared_task(bind=True)
 def process_incident(self, uuid):
@@ -30,51 +29,52 @@ def process_incident(self, uuid):
     except Incident.DoesNotExist:
         return
 
-    print(f"Raw input: {incident.raw_input}")
-
     #LangChain LLM - initialize chat
-    chat = ChatOpenAI(temperature=0.0, model=LLM_MODEL)
+    llm = ChatOpenAI(temperature=0.0, model=LLM_MODEL)
 
     try:
-        #set instructions for llm to format output into json using IncidentReport class
-        output_parser = PydanticOutputParser(pydantic_object=IncidentReport)
-        format_instructions = output_parser.get_format_instructions()
-        prompt = """You are an experienced software engineer supporting a technology product, with an understanding of solving incidents. 
-            Imagine that you are drafting an incident report for an error. 
-            Using the following stack trace or error log provided below, generate a structured incident post-mortem report.
-                
-            Stack trace or error log: {text}
-            {format_instructions}
-            """
+        prompt = """You are an experienced software engineer helping format an incident post-mortem report.                                                          
+              An engineer has already resolved this incident and filled out a rough draft below.                                                                       
+              Your job right now is only to reword and restructure the fields that were filled in. Make the                                                           
+              wording clear, concise, and professional without changing the meaning or adding new information.                                                                                                                                                                                           
 
-        # Initialize prompt template using prompt created
+              Title: {title}                                                                                                                                           
+              Description: {description}                                                                                                                               
+              Root cause: {root_cause}                                                                                                                                 
+              Affected systems: {affected_systems}                                                                                                                     
+              Timeline: {timeline}                                                                                                                                     
+              Resolution: {resolution}                                                                                                                                 
+              Prevention: {prevention}                                                                                                                                 
+              """
+
         prompt_template = ChatPromptTemplate.from_template(prompt)
-        messages = prompt_template.format_messages(text=incident.raw_input, format_instructions=format_instructions)
-        #prints full prompt - test
-        # print(messages[0].content)
+        structured_llm = llm.with_structured_output(IncidentReport)
 
-        response = chat.invoke(messages)
-        # print(response.content)
+        pipeline = prompt_template | structured_llm
 
-        #dictionary response
-        output_dict = output_parser.parse(response.content)
-
-        incident.title = output_dict.title
-        incident.description = output_dict.description
-        incident.root_cause = output_dict.root_cause
-        incident.affected_systems = output_dict.affected_systems
-        incident.severity = output_dict.severity
-        incident.timeline = output_dict.timeline
-        incident.suggested_fixes = output_dict.suggested_fixes
-        incident.prevention = output_dict.prevention
-
-        # create embeddings for the raw input to allow for vector similarity search
-        # allows user to query for similar incidents
+        response = pipeline.invoke({
+            "title": incident.title,
+            "description": incident.description,
+            "affected_systems": incident.affected_systems,
+            "timeline": incident.timeline,
+            "root_cause": incident.root_cause,
+            "resolution": incident.resolution,
+            "prevention": incident.prevention,
+        })
+        # logger.info("Invoke pipeline")
         vector = generate_embedding(incident.raw_input)
+
+        incident.title = response.title
+        incident.description = response.description
+        incident.affected_systems = response.affected_systems
+        incident.timeline = response.timeline
+        incident.root_cause = response.root_cause
+        incident.resolution = response.resolution
+        incident.prevention = response.prevention
         incident.vector = vector
         incident.status = Incident.Status.COMPLETED
         incident.save(update_fields=["title", "description", "root_cause", "affected_systems",
-                                     "severity", "timeline", "suggested_fixes", "prevention", "status", "vector",
+                                     "severity", "timeline", "resolution", "prevention", "status", "vector",
                                      ])
     except Exception as e:
         incident.status = Incident.Status.FAILED
@@ -117,7 +117,6 @@ def process_document(self, uuid):
 @shared_task(bind=True)
 def generate_pattern_report(self):
     incidents = list(Incident.objects.filter(vector__isnull=False, status=Incident.Status.COMPLETED))
-
 
     #----RUN KMEANS----
     #N incidents - for KMeans clusters

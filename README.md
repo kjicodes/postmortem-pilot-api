@@ -1,28 +1,23 @@
 # The Post-Mortem Pilot
 
-An internal engineering tool that turns incident reports into organizational memory. When an engineer hits an error, they can paste a stack trace or error log to surface similar past incidents, giving them useful context and a starting point rather than debugging blind. After resolution, they submit the incident to get a structured post-mortem draft to build on, filling in what actually happened, what they tried, and what fixed it. Over time, the knowledge base surfaces recurring patterns across incidents, giving teams the visibility they need for informed conversations about root causes and longer-term fixes.
-
-## The Problem
-
-Post-mortems get written and never read again. Teams lose institutional knowledge after every incident because their history isn't searchable or connected. This app turns individual incidents into a living knowledge base that gets more valuable the more it's used.
+An internal engineering tool that turns incident reports into organizational memory. Post-mortems usually get written once and never read again, so teams end up repeating the same incidents because their history isn't searchable. This app fixes that: an engineer hitting an error can paste a stack trace or upload a file to surface similar past incidents for context during triage, and after resolving it, they document what happened and what fixed it while the LLM acts as an editor, rewording and structuring it into a clean post-mortem. Over time, the knowledge base surfaces recurring patterns across incidents, giving teams the visibility to have informed conversations about root causes and longer-term fixes.
 
 ## Tech Stack
 
 - **Backend:** Python, Django, Django REST Framework
 - **Database:** PostgreSQL + pgvector
-- **LLM / Embeddings:** OpenAI via LangChain
+- **AI/LLM:** OpenAI via LangChain
+- **Pattern Detection:** scikit-learn
 - **Async Processing:** Celery + Redis
-- **Cloud:** AWS S3 (document storage), IAM
-- **Containerization:** Docker
+- **Cloud:** AWS S3, Docker
 - **Testing:** pytest, Postman
 
 ## Features
 
-- Paste a stack trace, error log, or upload a document to surface similar past incidents and gain context during triage 
-- Submit a resolved incident to generate a structured post-mortem draft via LLM, giving engineers a starting point to complete with what actually happened and how it was fixed
-- Upload existing post-mortem documents (PDF or DOCX) to seed the knowledge base with historical data
-- Cross-incident pattern detection using KMeans clustering and LLM summarization
-- REST API backend designed to be embedded into existing systems for richer, context-aware reports
+- Paste a stack trace, error log, or upload a document to surface similar past incidents and gain useful context during triage
+- After resolving an incident, document what happened, what you tried, and what fixed it. The LLM acts as an editor, restructuring your report into a clean, consistent post-mortem
+- Upload existing post-mortem documents (PDF or DOCX) to seed the knowledge base with historical incident data, so the app has useful history to work with from day one
+- Cross-incident pattern detection using KMeans clustering and LLM summarization, surfacing recurring root causes and services that fail repeatedly so teams can catch systemic issues early
 
 ## Getting Started
 
@@ -81,10 +76,10 @@ python manage.py migrate
 Redis runs as a background service via Homebrew (started in step 1). You need two terminal windows for the remaining processes:
 
 ```bash
-# Terminal 1 — Django server
+# Terminal 1: Django server
 python manage.py runserver
 
-# Terminal 2 — Celery worker
+# Terminal 2: Celery worker
 celery -A config worker --loglevel=info
 ```
 
@@ -108,15 +103,15 @@ docker-compose exec web python manage.py migrate
 
 ### Incidents
 
-| Method   | Endpoint | Description                                                                                                                   |
-|----------|----------|-------------------------------------------------------------------------------------------------------------------------------|
-| `POST`   | `/api/incidents/` | Submit a stack trace or error log, then LLM generates a structured report, saves it, and returns it                           |
-| `POST`   | `/api/incidents/search/` | Submit raw text or a document file, then runs vector similarity search and returns matching past incidents. |
-| `GET`    | `/api/incidents/` | List all incident reports                                                                                                     |
-| `GET`    | `/api/incidents/<uuid>/` | Retrieve a specific incident report                                                                                           |
-| `PATCH`  | `/api/incidents/<uuid>/` | Edit a generated report                                                                                                       |
-| `DELETE` | `/api/incidents/<uuid>/` | Remove an incident                                                                                                            |
-| `GET`    | `/api/incidents/<uuid>/similar/` | Find incidents similar to a specific documented one         |
+| Method      | Endpoint | Description                                                                                                                   |
+|-------------|----------|-------------------------------------------------------------------------------------------------------------------------------|
+| `POST`      | `/api/incidents/` | Submit a complete report of a resolved incident. The LLM rewords and structures it into a polished post-mortem, saves it, and returns it |
+| `POST`      | `/api/incidents/search/` | Submit raw text or a document file, then runs vector similarity search and returns matching past incidents. |
+| `GET`       | `/api/incidents/` | List all incident reports                                                                                                     |
+| `GET`       | `/api/incidents/<uuid>/` | Retrieve a specific incident report                                                                                           |
+| `PUT/PATCH` | `/api/incidents/<uuid>/` | Edit a generated report                                                                                                       |
+| `DELETE`    | `/api/incidents/<uuid>/` | Remove an incident                                                                                                            |
+| `GET`       | `/api/incidents/<uuid>/similar/` | Find incidents similar to a specific documented one         |
 
 ### Documents
 
@@ -138,19 +133,27 @@ docker-compose exec web python manage.py migrate
 ```json
 POST /api/incidents/
 {
-  "raw_input": "Traceback (most recent call last):\n  File \"app.py\"..."
+  "raw_input": "Traceback (most recent call last):\n  File \"app.py\"...",
+  "title": "Checkout service returning 500s",
+  "description": "Payment service threw on every checkout request after a bad deploy.",
+  "severity": "HIGH",
+  "affected_systems": ["checkout-service", "payment-service"],
+  "timeline": "Deploy went out at 2:14pm; error rate spiked immediately.",
+  "root_cause": "A bad deploy removed a required environment variable.",
+  "resolution": "Rolled back the deploy at 2:18pm; service restored by 2:40pm.",
+  "prevention": "Add pre-deploy config validation to CI."
 }
 ```
-Returns the incident with `status: PENDING`. Poll `GET /api/incidents/<uuid>/` until `status` is `COMPLETED`.
+All fields are required except `notes`. Returns the incident with `status: PENDING`. Poll `GET /api/incidents/<uuid>/` until `status` is `COMPLETED`, once the LLM finishes rewording and structuring what you submitted.
 
 **Search for similar incidents**
 ```json
 POST /api/incidents/search/
 {
-  "query": "Traceback (most recent call last):\n  File \"app.py\"..."
+  "raw_text": "Traceback (most recent call last):\n  File \"app.py\"..."
 }
 ```
-Returns a list of past incidents ranked by vector similarity.
+Returns a list of past incidents ranked by vector similarity. This is a triage-time lookup only, no record gets created.
 
 ## Async Processing
 
@@ -158,7 +161,7 @@ All LLM and embedding operations run asynchronously via Celery to avoid HTTP req
 
 ```
 POST /incidents → Save with PENDING status → Return 202 ACCEPTED
-                                           → Celery task: LLM report generation + embedding
+                                           → Celery task: LLM edits/rewords the submitted report + generates embedding
                                                          → Update record → COMPLETED or FAILED
 ```
 
