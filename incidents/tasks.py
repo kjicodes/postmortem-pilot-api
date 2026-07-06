@@ -1,17 +1,22 @@
 from django.conf import settings
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List
 from celery import shared_task
 from incidents.models import Incident, Document, PatternReport
 from incidents.utils import generate_embedding, extract_document_text
 import boto3
 import numpy as np
 from sklearn.cluster import KMeans
+from datetime import timedelta
+from django.core.cache import cache
+from incidents.serializers import PatternReportSerializer
 
 LLM_MODEL = "gpt-4o-mini"
+PATTERN_REPORT_TTL = timedelta(hours=1)
+PATTERN_REPORT_CACHE_KEY = "latest_pattern_report"
 
 class IncidentReport(BaseModel):
     title: str = Field(description="Reworded for clarity and concision. Keep under 10 words.")
@@ -116,33 +121,36 @@ def process_document(self, uuid):
 
 @shared_task(bind=True)
 def generate_pattern_report(self):
+    print("In pattern report task..")
     incidents = list(Incident.objects.filter(vector__isnull=False, status=Incident.Status.COMPLETED))
 
     #----RUN KMEANS----
     #N incidents - for KMeans clusters
     #number of clusters scale sensibly
     count = len(incidents)
-    print(count)
 
     if count < 3:
+        print("Incident count < 3")
         return
     elif count < 20:
+        print("Incident count < 20")
         n = 3
     elif count < 100:
+        print("Incident count < 100")
         n = 5
     else:
+        print("Incident count >= 100")
         n = 10
 
     try:
         #extract vectors into a numpy array - needed as input for KMeans
         vectors = np.array([incident.vector for incident in incidents])
-        print(vectors)
 
-        #run KMeans
-        kmeans = KMeans(n_clusters=n, random_state=42)
+        #run KMeans - n groups
+        #labels = a list of clusters -> each cluster represents an incident -> clusters are grouped
+        kmeans = KMeans(n_clusters=n, random_state=50)
         kmeans.fit(vectors)
         labels = kmeans.labels_
-        print(labels)
 
         #group incidents by cluster
         clusters = {}
@@ -150,13 +158,12 @@ def generate_pattern_report(self):
             if label not in clusters:
                 clusters[label] = []
             clusters[label].append(incidents[i])    #each object key is a cluster number, which has a list of incidents as the value
-        print(clusters)
 
         #----RUN LLM----
         #use LLM to summarize in 2 parts:
         #first summarize each cluster of incidents..
         #then summarize those summaries
-        chat = ChatOpenAI(temperature=0.0, model=LLM_MODEL)
+        llm = ChatOpenAI(temperature=0.0, model=LLM_MODEL)
         prompt_one = """You are an experienced software engineer analyzing a group of related incidents.
             Below is a list of incident titles and descriptions that have been grouped together by similarity.
             Summarize the recurring pattern you see in 2-3 sentences. Be specific about what is failing and why.
@@ -177,8 +184,8 @@ def generate_pattern_report(self):
         cluster_prompt = ChatPromptTemplate.from_template(prompt_one)
         synthesis_prompt = ChatPromptTemplate.from_template(prompt_two)
 
-        cluster_chain = cluster_prompt | chat | StrOutputParser()
-        synthesis_chain = synthesis_prompt | chat | StrOutputParser()
+        cluster_chain = cluster_prompt | llm | StrOutputParser()
+        synthesis_chain = synthesis_prompt | llm | StrOutputParser()
 
         #each entry in the list is a summary of a cluster (group of related incidents)
         cluster_summaries_list = []
@@ -193,12 +200,8 @@ def generate_pattern_report(self):
             summary = cluster_chain.invoke({"cluster_text": cluster_text})
             cluster_summaries_list.append(summary)
 
-            print(f"Incident lines summarized by llm: {incident_lines}")
-        print(f"Cluster summaries list from llm: {cluster_summaries_list}")
-
         cluster_summaries = "\n\n".join(cluster_summaries_list)
-        print(cluster_summaries)
-        final_report = synthesis_chain.invoke({ "cluster_summaries": cluster_summaries })
+        final_report = synthesis_chain.invoke({"cluster_summaries": cluster_summaries})
 
         #build the cluster data for the response obj - provide context for the generated pattern report for anyone reading it
         cluster_data = []
@@ -208,11 +211,15 @@ def generate_pattern_report(self):
                 "incidents": [{"uuid": str(incident.uuid), "title": incident.title} for incident in cluster_incidents],
                 "cluster_summary": cluster_summaries_list[i]
             }
-            print(data)
             cluster_data.append(data)
 
-        pattern_report = { "summary": final_report, "clusters": cluster_data }
-        PatternReport.objects.create(report=pattern_report)
+        pattern_report = {"summary": final_report, "clusters": cluster_data}
+        pattern_report_obj = PatternReport.objects.create(report=pattern_report)
+        cache.set(
+            PATTERN_REPORT_CACHE_KEY,
+            PatternReportSerializer(pattern_report_obj).data,
+            timeout=PATTERN_REPORT_TTL.total_seconds()
+        )
     except Exception as e:
         print(f"Pattern report generation failed: {type(e).__name__}: {e}")
 
