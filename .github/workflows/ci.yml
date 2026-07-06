@@ -1,0 +1,60 @@
+name: CI
+
+on: [push]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: postmortem_pilot
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-                                                                                                                                                  
+          --health-cmd pg_isready                                                                                                                                    
+          --health-interval 10s                                                                                                                                      
+          --health-timeout 5s                                                                                                                                        
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - run: pip install -r requirements.txt
+
+      - name: Run migrations
+        env:
+          DB_NAME: postmortem_pilot
+          DB_USER: postgres
+          DATABASE_PASSWORD: postgres
+          DB_HOST: localhost
+          CELERY_BROKER_URL: redis://localhost:6379/0
+          CELERY_RESULT_BACKEND: redis://localhost:6379/0
+          REDIS_CACHE_URL: redis://localhost:6379/1
+          SECRET_KEY: test-secret-key
+          OPENAI_API_KEY: sk-fake-key-for-ci
+        run: python manage.py migrate
+
+      - name: Run tests
+        env:
+          DB_NAME: postmortem_pilot
+          DB_USER: postgres
+          DATABASE_PASSWORD: postgres
+          DB_HOST: localhost
+          CELERY_BROKER_URL: redis://localhost:6379/0
+          CELERY_RESULT_BACKEND: redis://localhost:6379/0
+          REDIS_CACHE_URL: redis://localhost:6379/1
+          SECRET_KEY: test-secret-key
+          OPENAI_API_KEY: sk-fake-key-for-ci
+        run: pytest
