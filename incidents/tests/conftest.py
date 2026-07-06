@@ -3,6 +3,7 @@ import mimetypes
 from pathlib import Path
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
+from django.core.cache import cache
 
 @pytest.fixture
 def api_client():
@@ -14,3 +15,10 @@ def load_fixture_file(filename, content_type=None):
     if content_type is None:
         content_type, _ = mimetypes.guess_type(filename)
     return SimpleUploadedFile(filename, path.read_bytes(), content_type=content_type)
+
+#clear cache
+@pytest.fixture(autouse=True)
+def clear_cache():
+  cache.clear()
+  yield
+  cache.clear()
