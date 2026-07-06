@@ -23,6 +23,8 @@ Django==6.0.6
 django-redis==7.0.0
 django-storages==1.14.6
 djangorestframework==3.17.1
+factory_boy==3.3.3
+Faker==40.28.1
 frozenlist==1.8.0
 h11==0.16.0
 httpcore==1.0.9
