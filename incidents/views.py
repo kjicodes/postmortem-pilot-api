@@ -1,20 +1,17 @@
 from rest_framework.viewsets import ModelViewSet, ReadOnlyModelViewSet
 from rest_framework.response import Response
 from rest_framework.decorators import action
+from rest_framework.status import HTTP_400_BAD_REQUEST, HTTP_200_OK, HTTP_202_ACCEPTED, HTTP_404_NOT_FOUND, HTTP_503_SERVICE_UNAVAILABLE
 from django.conf import settings
 from django.utils import timezone
-from datetime import timedelta
+from django.core.cache import cache
+from pgvector.django import CosineDistance
 from incidents.serializers import IncidentSerializer, DocumentSerializer, PatternReportSerializer
 from incidents.utils import generate_embedding, extract_document_text
-from rest_framework.status import HTTP_400_BAD_REQUEST, HTTP_200_OK, HTTP_201_CREATED, HTTP_202_ACCEPTED, HTTP_404_NOT_FOUND, HTTP_503_SERVICE_UNAVAILABLE
 from incidents.models import Incident, Document, PatternReport
-from incidents.tasks import process_incident, process_document, generate_pattern_report
-from pgvector.django import CosineDistance
+from incidents.tasks import process_incident, process_document, generate_pattern_report, PATTERN_REPORT_TTL, PATTERN_REPORT_CACHE_KEY
 import boto3
 import uuid as uuidlib
-
-PATTERN_REPORT_TTL = timedelta(hours=1)
-
 
 class IncidentViewSet(ModelViewSet):
     queryset = Incident.objects.all()
@@ -143,21 +140,37 @@ class PatternReportViewSet(ReadOnlyModelViewSet):
     serializer_class = PatternReportSerializer
 
     def list(self, request):
-        #only 1 report will exist in the db at a time
+        #check cache first
+        cached_report = cache.get(PATTERN_REPORT_CACHE_KEY)
+        if cached_report:
+            print("Cache hit")
+            return Response(cached_report, status=HTTP_200_OK)
+        print("Cache miss")
         latest_report = PatternReport.objects.order_by('-generated_at').first()
         current_time = timezone.now()
 
         #IF the report was generated within the hour, it is fresh - return it
         if latest_report and latest_report.generated_at >= current_time - PATTERN_REPORT_TTL:
             serializer = PatternReportSerializer(latest_report)
-            print(f"Latest report returned. {current_time}")
+            remaining_ttl = PATTERN_REPORT_TTL - (current_time - latest_report.generated_at)
+            cache.set(PATTERN_REPORT_CACHE_KEY, serializer.data, timeout=remaining_ttl.total_seconds())
+            print("Non-stale report returned - cache set")
             return Response(serializer.data, status=HTTP_200_OK)
+
+        #IF incidents < 3, return error message
+        print("Stale report - generating new report")
+        completed_incidents_count = Incident.objects.filter(vector__isnull=False, status=Incident.Status.COMPLETED).count()
+        if completed_incidents_count < 3:
+            response = {
+                "message": "Not enough incidents yet to detect patterns. At least 3 completed incidents are required."}
+            return Response(response, status=HTTP_400_BAD_REQUEST)
 
         #IF the report is stale (time delta > 1hr), generate a fresh one
         generate_pattern_report.delay()
         response = {
             "message": "Generating new pattern report.",
-            "old_report_last_generated_at": latest_report.generated_at,
+            "old_report_last_generated_at": latest_report.generated_at if latest_report else None,
             "current_time": current_time
         }
+        print("State report - new report generated successfully")
         return Response(response, status=HTTP_202_ACCEPTED)
