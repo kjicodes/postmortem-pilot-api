@@ -14,9 +14,9 @@ An internal engineering tool that turns incident reports into organizational mem
 
 ## Features
 
-- Paste a stack trace, error log, or upload a document to surface similar past incidents and gain useful context during triage
+- Paste a stack trace, error log, or upload a document to surface similar past incidents 
 - After resolving an incident, document what happened, what you tried, and what fixed it. The LLM acts as an editor, restructuring your report into a clean, consistent post-mortem
-- Upload existing post-mortem documents (PDF or DOCX) to seed the knowledge base with historical incident data, so the app has useful history to work with from day one
+- Upload existing post-mortem documents (PDF or DOCX) to seed the knowledge base with historical incident data
 - Cross-incident pattern detection using KMeans clustering and LLM summarization, surfacing recurring root causes and services that fail repeatedly so teams can catch systemic issues early
 
 ## Getting Started
@@ -103,15 +103,15 @@ docker-compose exec web python manage.py migrate
 
 ### Incidents
 
-| Method      | Endpoint | Description                                                                                                                   |
-|-------------|----------|-------------------------------------------------------------------------------------------------------------------------------|
+| Method      | Endpoint | Description                                                                                                                              |
+|-------------|----------|------------------------------------------------------------------------------------------------------------------------------------------|
 | `POST`      | `/api/incidents/` | Submit a complete report of a resolved incident. The LLM rewords and structures it into a polished post-mortem, saves it, and returns it |
-| `POST`      | `/api/incidents/search/` | Submit raw text or a document file, then runs vector similarity search and returns matching past incidents. |
-| `GET`       | `/api/incidents/` | List all incident reports                                                                                                     |
-| `GET`       | `/api/incidents/<uuid>/` | Retrieve a specific incident report                                                                                           |
-| `PUT/PATCH` | `/api/incidents/<uuid>/` | Edit a generated report                                                                                                       |
-| `DELETE`    | `/api/incidents/<uuid>/` | Remove an incident                                                                                                            |
-| `GET`       | `/api/incidents/<uuid>/similar/` | Find incidents similar to a specific documented one         |
+| `POST`      | `/api/incidents/search/` | Submit raw text or a document file, then runs vector similarity search and returns matching past incidents.                              |
+| `GET`       | `/api/incidents/` | List all incident reports                                                                                                                |
+| `GET`       | `/api/incidents/<uuid>/` | Retrieve a specific incident report                                                                                                      |
+| `PUT/PATCH` | `/api/incidents/<uuid>/` | Edit a generated report                                                                                                                  |
+| `DELETE`    | `/api/incidents/<uuid>/` | Remove an incident                                                                                                                       |
+| `GET`       | `/api/incidents/<uuid>/similar/` | Find similar incidents                                                                                                                   |
 
 ### Documents
 
@@ -127,7 +127,7 @@ docker-compose exec web python manage.py migrate
 |--------|----------|-------------|
 | `GET` | `/api/patterns/` | Surface cross-incident trends using KMeans clustering and LLM summarization |
 
-## Examples
+## Example
 
 **Submit a new incident**
 ```json
@@ -146,15 +146,6 @@ POST /api/incidents/
 ```
 All fields are required except `notes`. Returns the incident with `status: PENDING`. Poll `GET /api/incidents/<uuid>/` until `status` is `COMPLETED`, once the LLM finishes rewording and structuring what you submitted.
 
-**Search for similar incidents**
-```json
-POST /api/incidents/search/
-{
-  "raw_text": "Traceback (most recent call last):\n  File \"app.py\"..."
-}
-```
-Returns a list of past incidents ranked by vector similarity. This is a triage-time lookup only, no record gets created.
-
 ## Async Processing
 
 All LLM and embedding operations run asynchronously via Celery to avoid HTTP request timeouts. The workflow for incident processing is:
@@ -164,8 +155,6 @@ POST /incidents → Save with PENDING status → Return 202 ACCEPTED
                                            → Celery task: LLM edits/rewords the submitted report + generates embedding
                                                          → Update record → COMPLETED or FAILED
 ```
-
-The same pattern applies to document processing.
 
 ## Roadmap
 
