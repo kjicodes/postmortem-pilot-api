@@ -97,8 +97,6 @@ The app will be available at `http://localhost:8000`. On first run, apply migrat
 docker-compose exec web python manage.py migrate
 ```
 
----
-
 ## API Endpoints
 
 ### Incidents
@@ -158,5 +156,5 @@ POST /incidents → Save with PENDING status → Return 202 ACCEPTED
 
 ## Roadmap
 
-- [ ] Complete testing
-- [ ] Work on frontend (using React)
+- [x] Complete testing
+- [ ] Build Next.js + TypeScript front-end
